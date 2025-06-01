@@ -74,7 +74,7 @@ async fn play_wordle_game(initial_words: &HashSet<String>) -> Result<(), Box<dyn
 
         // 1. Determine the current guess
         if guess_count == 1 {
-            current_guess = "roate".to_string(); // A common starting word
+            current_guess = "soare".to_string(); // A common starting word
             println!("Starting with guess: {}", current_guess);
         } else {
             if filtered_words.is_empty() {
