@@ -3,6 +3,63 @@ use std::error::Error;
 use std::collections::{HashSet, HashMap};
 use std::io::{self, Write};
 
+fn get_feedback_pattern(guess: &str, target: &str) -> String {
+    let guess_chars: Vec<char> = guess.chars().collect();
+    let target_chars: Vec<char> = target.chars().collect();
+    let mut result = vec!['?'; guess_chars.len()];
+    let mut target_char_counts = HashMap::new();
+    
+    // Count characters in target
+    for ch in target_chars.iter() {
+        *target_char_counts.entry(*ch).or_insert(0) += 1;
+    }
+    
+    // First pass: mark greens and reduce counts
+    for i in 0..guess_chars.len() {
+        if guess_chars[i] == target_chars[i] {
+            result[i] = '@';
+            *target_char_counts.get_mut(&guess_chars[i]).unwrap() -= 1;
+        }
+    }
+    
+    // Second pass: mark yellows
+    for i in 0..guess_chars.len() {
+        if result[i] == '?' {
+            if let Some(count) = target_char_counts.get_mut(&guess_chars[i]) {
+                if *count > 0 {
+                    result[i] = '#';
+                    *count -= 1;
+                }
+            }
+        }
+    }
+    
+    result.into_iter().collect()
+}
+
+fn calculate_entropy(guess: &str, possible_words: &HashSet<String>) -> f64 {
+    let mut pattern_counts: HashMap<String, usize> = HashMap::new();
+    
+    // Count how many words produce each feedback pattern
+    for target_word in possible_words.iter() {
+        let pattern = get_feedback_pattern(guess, target_word);
+        *pattern_counts.entry(pattern).or_insert(0) += 1;
+    }
+    
+    // Calculate entropy: -Σ(p * log2(p))
+    let total_words = possible_words.len() as f64;
+    let mut entropy = 0.0;
+    
+    for count in pattern_counts.values() {
+        if *count > 0 {
+            let probability = *count as f64 / total_words;
+            entropy -= probability * probability.log2();
+        }
+    }
+    
+    entropy
+}
+
 async fn play_wordle_game(initial_words: &HashSet<String>) -> Result<(), Box<dyn Error>> {
     let mut filtered_words = initial_words.clone();
     let mut guess_count = 0;
@@ -28,17 +85,11 @@ async fn play_wordle_game(initial_words: &HashSet<String>) -> Result<(), Box<dyn
                 current_guess = filtered_words.iter().next().unwrap().clone();
                 println!("Only one word remains: {}", current_guess);
             } else {
-                // --- Frequency Scoring Logic to determine next guess ---
-                println!("Calculating best next guess from {} possibilities...", filtered_words.len());
-                let mut letter_frequencies: HashMap<char, usize> = HashMap::new();
-                for word_str in filtered_words.iter() {
-                    for ch in word_str.chars() {
-                        *letter_frequencies.entry(ch).or_insert(0) += 1;
-                    }
-                }
-
+                // --- Entropy Scoring Logic to determine next guess ---
+                println!("Calculating best next guess from {} possibilities using entropy scoring...", filtered_words.len());
+                
                 let mut best_guess_candidate: Option<String> = None;
-                let mut max_score = 0;
+                let mut max_entropy = 0.0;
 
                 for potential_guess_word_str in filtered_words.iter() {
                     // Skip rejected words
@@ -46,28 +97,22 @@ async fn play_wordle_game(initial_words: &HashSet<String>) -> Result<(), Box<dyn
                         continue;
                     }
 
-                    let mut current_score = 0;
-                    let mut unique_chars_in_guess = HashSet::new();
-                    for ch in potential_guess_word_str.chars() {
-                        unique_chars_in_guess.insert(ch);
-                    }
-                    for unique_char in unique_chars_in_guess {
-                        current_score += *letter_frequencies.get(&unique_char).unwrap_or(&0);
-                    }
+                    let entropy = calculate_entropy(potential_guess_word_str, &filtered_words);
 
                     match best_guess_candidate {
                         Some(ref current_best_str_ref) => {
-                            if current_score > max_score {
-                                max_score = current_score;
+                            if entropy > max_entropy {
+                                max_entropy = entropy;
                                 best_guess_candidate = Some(potential_guess_word_str.clone());
-                            } else if current_score == max_score {
+                            } else if (entropy - max_entropy).abs() < 0.0001 {
+                                // If entropies are essentially equal, pick lexicographically smaller
                                 if potential_guess_word_str < current_best_str_ref {
                                     best_guess_candidate = Some(potential_guess_word_str.clone());
                                 }
                             }
                         }
                         None => {
-                            max_score = current_score;
+                            max_entropy = entropy;
                             best_guess_candidate = Some(potential_guess_word_str.clone());
                         }
                     }
@@ -80,8 +125,8 @@ async fn play_wordle_game(initial_words: &HashSet<String>) -> Result<(), Box<dyn
                         break;
                     }
                 };
-                println!("Suggested next guess: {}", current_guess);
-                // --- End of Frequency Scoring Logic ---
+                println!("Suggested next guess: {} (entropy: {:.3})", current_guess, max_entropy);
+                // --- End of Entropy Scoring Logic ---
             }
         }
 
